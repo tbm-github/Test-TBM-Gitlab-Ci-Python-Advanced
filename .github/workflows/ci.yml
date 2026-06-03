@@ -56,6 +56,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pytest pytest-asyncio httpx
-    
-    - name: Run tests
-      run: pytest -v
+
+    - name: Run tests with debug
+      run: |
+        pytest -v -s --log-cli-level=INFO

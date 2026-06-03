@@ -1,3 +1,5 @@
+import os
+
 from httpx import ASGITransport, AsyncClient
 import pytest
 import pytest_asyncio
@@ -8,8 +10,13 @@ import database
 from main import app
 import models
 
-# Создаем тестовые engine и session
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+# Используем временный файл для CI
+TEST_DATABASE_URL = "sqlite+aiosqlite:///./test_cookbook.db"
+TEST_DB_FILE = "./test_cookbook.db"
+
+# Удаляем файл перед тестами
+if os.path.exists(TEST_DB_FILE):
+    os.remove(TEST_DB_FILE)
 
 test_engine = create_async_engine(
     TEST_DATABASE_URL, connect_args={"check_same_thread": False}
@@ -39,13 +46,16 @@ async def setup_database():
         await conn.run_sync(models.Recipe.metadata.create_all)
     yield
     await test_engine.dispose()
+    # Удаляем файл после тестов
+    if os.path.exists(TEST_DB_FILE):
+        os.remove(TEST_DB_FILE)
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def clear_tables():
     """Очищаем таблицы перед каждым тестом"""
     async with test_engine.begin() as conn:
-        # Удаляем все данные из таблицы
+        # Просто удаляем все данные
         await conn.execute(models.Recipe.__table__.delete())
     yield
 
