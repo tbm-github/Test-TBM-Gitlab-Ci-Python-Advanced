@@ -1,13 +1,14 @@
 import os
-import pytest
-import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from unittest.mock import patch
 
+from httpx import ASGITransport, AsyncClient
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+import database
 from main import app
 import models
-import database
 
 # Тестовая база данных – используем отдельный файл
 TEST_DATABASE_URL = "sqlite+aiosqlite:///./test_cookbook.db"
@@ -17,6 +18,7 @@ TEST_DB_FILE = "./test_cookbook.db"
 @pytest.fixture(scope="session")
 def event_loop():
     import asyncio
+
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
@@ -31,8 +33,7 @@ async def setup_db():
 
     # Создаём тестовый engine
     test_engine = create_async_engine(
-        TEST_DATABASE_URL,
-        connect_args={"check_same_thread": False}
+        TEST_DATABASE_URL, connect_args={"check_same_thread": False}
     )
 
     # Создаём все таблицы
@@ -41,14 +42,14 @@ async def setup_db():
 
     # Создаём сессию
     TestingAsyncSession = async_sessionmaker(
-        test_engine,
-        class_=AsyncSession,
-        expire_on_commit=False
+        test_engine, class_=AsyncSession, expire_on_commit=False
     )
 
     # Патчим зависимости
-    with patch.object(database, "engine", test_engine), \
-            patch.object(database, "async_session", TestingAsyncSession):
+    with (
+        patch.object(database, "engine", test_engine),
+        patch.object(database, "async_session", TestingAsyncSession),
+    ):
         yield
 
     # Закрываем соединение после теста
