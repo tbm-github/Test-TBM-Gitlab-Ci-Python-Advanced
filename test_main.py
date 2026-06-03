@@ -1,38 +1,22 @@
 import os
-from unittest.mock import patch
-
 import pytest
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from httpx import AsyncClient, ASGITransport
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from unittest.mock import patch
 
-import database
-import models
 from main import app
+import models
+import database
 
 # Тестовая база данных – используем отдельный файл
 TEST_DATABASE_URL = "sqlite+aiosqlite:///./test_cookbook.db"
 TEST_DB_FILE = "./test_cookbook.db"
 
-# Удаляем старый файл, если он остался с предыдущих запусков
-if os.path.exists(TEST_DB_FILE):
-    os.remove(TEST_DB_FILE)
-
-# Создаём тестовый engine
-test_engine = create_async_engine(
-    TEST_DATABASE_URL, connect_args={"check_same_thread": False}
-)
-
-TestingAsyncSession = sessionmaker(
-    test_engine, class_=AsyncSession, expire_on_commit=False
-)
-
 
 @pytest.fixture(scope="session")
 def event_loop():
     import asyncio
-
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
@@ -40,23 +24,47 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
 async def setup_db():
-    """Перед каждым тестом пересоздаём таблицы (полная очистка)"""
+    """Перед каждым тестом создаём таблицы заново"""
+    # Удаляем старый файл
+    if os.path.exists(TEST_DB_FILE):
+        os.remove(TEST_DB_FILE)
+
+    # Создаём тестовый engine
+    test_engine = create_async_engine(
+        TEST_DATABASE_URL,
+        connect_args={"check_same_thread": False}
+    )
+
+    # Создаём все таблицы
     async with test_engine.begin() as conn:
-        await conn.run_sync(models.Recipe.metadata.drop_all)
         await conn.run_sync(models.Recipe.metadata.create_all)
-    yield
+
+    # Создаём сессию
+    TestingAsyncSession = async_sessionmaker(
+        test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False
+    )
+
+    # Патчим зависимости
+    with patch.object(database, "engine", test_engine), \
+            patch.object(database, "async_session", TestingAsyncSession):
+        yield
+
+    # Закрываем соединение после теста
+    await test_engine.dispose()
+
+    # Удаляем файл после теста (опционально)
+    if os.path.exists(TEST_DB_FILE):
+        os.remove(TEST_DB_FILE)
 
 
 @pytest_asyncio.fixture
 async def client(setup_db):
-    """HTTP-клиент с подменой зависимостей БД на тестовые"""
-    with (
-        patch.object(database, "engine", test_engine),
-        patch.object(database, "async_session", TestingAsyncSession),
-    ):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            yield ac
+    """HTTP-клиент для тестов"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
 
 
 # ---------- Тесты ----------
@@ -78,6 +86,7 @@ async def test_create_recipe(client):
 
 @pytest.mark.asyncio
 async def test_get_recipe_detail_increments_views(client):
+    # Создаем рецепт
     resp_create = await client.post(
         "/recipes",
         json={
@@ -87,14 +96,18 @@ async def test_get_recipe_detail_increments_views(client):
             "description": "опис",
         },
     )
+    assert resp_create.status_code == 201
     recipe_id = resp_create.json()["id"]
     assert resp_create.json()["views"] == 0
 
+    # Первый просмотр
     resp1 = await client.get(f"/recipes/{recipe_id}")
     assert resp1.status_code == 200
     assert resp1.json()["views"] == 1
 
+    # Второй просмотр
     resp2 = await client.get(f"/recipes/{recipe_id}")
+    assert resp2.status_code == 200
     assert resp2.json()["views"] == 2
 
 
