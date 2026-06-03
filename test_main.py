@@ -1,20 +1,21 @@
-from unittest.mock import patch
-
 from httpx import ASGITransport, AsyncClient
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-import database
 from main import app
 import models
 
 # Тестовая база данных в памяти
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
-# Глобальные переменные для тестов
-test_engine = None
-TestingAsyncSession = None
+# Создаем тестовые engine и session ДО импорта зависимостей
+test_engine = create_async_engine(
+    TEST_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+TestingAsyncSession = async_sessionmaker(
+    test_engine, class_=AsyncSession, expire_on_commit=False
+)
 
 
 @pytest.fixture(scope="session")
@@ -28,26 +29,10 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def setup_database():
-    """Создаем тестовую базу данных в памяти один раз для всех тестов"""
-    global test_engine, TestingAsyncSession
-
-    # Создаём тестовый engine (база в памяти)
-    test_engine = create_async_engine(
-        TEST_DATABASE_URL, connect_args={"check_same_thread": False}
-    )
-
-    # Создаём все таблицы
+    """Создаем таблицы один раз для всех тестов"""
     async with test_engine.begin() as conn:
         await conn.run_sync(models.Recipe.metadata.create_all)
-
-    # Создаём сессию
-    TestingAsyncSession = async_sessionmaker(
-        test_engine, class_=AsyncSession, expire_on_commit=False
-    )
-
     yield
-
-    # Очистка после всех тестов
     await test_engine.dispose()
 
 
@@ -62,14 +47,20 @@ async def clear_tables():
 
 @pytest_asyncio.fixture
 async def client():
-    """HTTP-клиент для тестов с подменой зависимостей БД"""
-    with (
-        patch.object(database, "engine", test_engine),
-        patch.object(database, "async_session", TestingAsyncSession),
-    ):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            yield ac
+    """HTTP-клиент для тестов"""
+    # Подменяем зависимости в модуле database ДО создания клиента
+    import database
+
+    database.engine = test_engine
+    database.async_session = TestingAsyncSession
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+    # Восстанавливаем оригинальные значения (опционально)
+    # database.engine = original_engine
+    # database.async_session = original_session
 
 
 # ---------- Тесты ----------
