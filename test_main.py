@@ -3,19 +3,24 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+# Импортируем все модули в начале файла
+import database
 from main import app
 import models
 
-# Тестовая база данных в памяти
+# Создаем тестовые engine и session
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
-# Создаем тестовые engine и session ДО импорта зависимостей
 test_engine = create_async_engine(
     TEST_DATABASE_URL, connect_args={"check_same_thread": False}
 )
 TestingAsyncSession = async_sessionmaker(
     test_engine, class_=AsyncSession, expire_on_commit=False
 )
+
+# Подменяем зависимости в модуле database
+database.engine = test_engine
+database.async_session = TestingAsyncSession
 
 
 @pytest.fixture(scope="session")
@@ -48,19 +53,9 @@ async def clear_tables():
 @pytest_asyncio.fixture
 async def client():
     """HTTP-клиент для тестов"""
-    # Подменяем зависимости в модуле database ДО создания клиента
-    import database
-
-    database.engine = test_engine
-    database.async_session = TestingAsyncSession
-
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
-
-    # Восстанавливаем оригинальные значения (опционально)
-    # database.engine = original_engine
-    # database.async_session = original_session
 
 
 # ---------- Тесты ----------
