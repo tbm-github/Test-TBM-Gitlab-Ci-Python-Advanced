@@ -6,7 +6,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# Импорты для main и database
+# Импортируем все модули в начале файла
 import database
 from main import app
 import models
@@ -24,16 +24,6 @@ test_engine = create_async_engine(
     TEST_DATABASE_URL, connect_args={"check_same_thread": False}
 )
 
-
-# Функция для создания таблиц
-async def create_tables():
-    async with test_engine.begin() as conn:
-        await conn.run_sync(models.Recipe.metadata.create_all)
-
-
-# Запускаем создание таблиц синхронно
-asyncio.run(create_tables())
-
 # Создаем session
 TestingAsyncSession = async_sessionmaker(
     test_engine, class_=AsyncSession, expire_on_commit=False
@@ -44,24 +34,25 @@ database.engine = test_engine
 database.async_session = TestingAsyncSession
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def event_loop():
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def clear_tables():
-    """Очищаем таблицы перед каждым тестом"""
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def setup_database():
+    """Создаем таблицы перед каждым тестом"""
     async with test_engine.begin() as conn:
-        # Удаляем все данные
-        await conn.execute(models.Recipe.__table__.delete())
+        await conn.run_sync(models.Recipe.metadata.create_all)
     yield
+    async with test_engine.begin() as conn:
+        await conn.run_sync(models.Recipe.metadata.drop_all)
 
 
 @pytest_asyncio.fixture
-async def client():
+async def client(setup_database):
     """HTTP-клиент для тестов"""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
