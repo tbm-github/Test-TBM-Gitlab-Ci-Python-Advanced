@@ -1,4 +1,3 @@
-import os
 from unittest.mock import patch
 
 from httpx import ASGITransport, AsyncClient
@@ -10,9 +9,12 @@ import database
 from main import app
 import models
 
-# Тестовая база данных – используем отдельный файл
-TEST_DATABASE_URL = "sqlite+aiosqlite:///./test_cookbook.db"
-TEST_DB_FILE = "./test_cookbook.db"
+# Тестовая база данных в памяти
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+# Глобальные переменные для тестов
+test_engine = None
+TestingAsyncSession = None
 
 
 @pytest.fixture(scope="session")
@@ -24,14 +26,12 @@ def event_loop():
     loop.close()
 
 
-@pytest_asyncio.fixture(scope="function", autouse=True)
-async def setup_db():
-    """Перед каждым тестом создаём таблицы заново"""
-    # Удаляем старый файл
-    if os.path.exists(TEST_DB_FILE):
-        os.remove(TEST_DB_FILE)
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def setup_database():
+    """Создаем тестовую базу данных в памяти один раз для всех тестов"""
+    global test_engine, TestingAsyncSession
 
-    # Создаём тестовый engine
+    # Создаём тестовый engine (база в памяти)
     test_engine = create_async_engine(
         TEST_DATABASE_URL, connect_args={"check_same_thread": False}
     )
@@ -45,27 +45,31 @@ async def setup_db():
         test_engine, class_=AsyncSession, expire_on_commit=False
     )
 
-    # Патчим зависимости
+    yield
+
+    # Очистка после всех тестов
+    await test_engine.dispose()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def clear_tables():
+    """Очищаем таблицы перед каждым тестом"""
+    async with test_engine.begin() as conn:
+        # Удаляем все данные из таблицы
+        await conn.execute(models.Recipe.__table__.delete())
+    yield
+
+
+@pytest_asyncio.fixture
+async def client():
+    """HTTP-клиент для тестов с подменой зависимостей БД"""
     with (
         patch.object(database, "engine", test_engine),
         patch.object(database, "async_session", TestingAsyncSession),
     ):
-        yield
-
-    # Закрываем соединение после теста
-    await test_engine.dispose()
-
-    # Удаляем файл после теста (опционально)
-    if os.path.exists(TEST_DB_FILE):
-        os.remove(TEST_DB_FILE)
-
-
-@pytest_asyncio.fixture
-async def client(setup_db):
-    """HTTP-клиент для тестов"""
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            yield ac
 
 
 # ---------- Тесты ----------
