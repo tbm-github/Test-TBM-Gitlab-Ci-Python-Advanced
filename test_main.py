@@ -1,15 +1,15 @@
 import os
-import pytest
-import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 from unittest.mock import patch
 
-from main import app
-from database import Base
-import models
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+
 import database
+import models
+from main import app
 
 # Тестовая база данных – используем отдельный файл
 TEST_DATABASE_URL = "sqlite+aiosqlite:///./test_cookbook.db"
@@ -21,20 +21,18 @@ if os.path.exists(TEST_DB_FILE):
 
 # Создаём тестовый engine
 test_engine = create_async_engine(
-    TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False}
+    TEST_DATABASE_URL, connect_args={"check_same_thread": False}
 )
 
 TestingAsyncSession = sessionmaker(
-    test_engine,
-    class_=AsyncSession,
-    expire_on_commit=False
+    test_engine, class_=AsyncSession, expire_on_commit=False
 )
 
 
 @pytest.fixture(scope="session")
 def event_loop():
     import asyncio
+
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
@@ -52,8 +50,10 @@ async def setup_db():
 @pytest_asyncio.fixture
 async def client(setup_db):
     """HTTP-клиент с подменой зависимостей БД на тестовые"""
-    with patch.object(database, "engine", test_engine), \
-         patch.object(database, "async_session", TestingAsyncSession):
+    with (
+        patch.object(database, "engine", test_engine),
+        patch.object(database, "async_session", TestingAsyncSession),
+    ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
@@ -66,7 +66,7 @@ async def test_create_recipe(client):
         "title": "Тестовый рецепт",
         "cooking_time": 30,
         "ingredients": "Тестовые ингредиенты",
-        "description": "Тестовое описание"
+        "description": "Тестовое описание",
     }
     response = await client.post("/recipes", json=recipe_data)
     assert response.status_code == 201
@@ -78,10 +78,15 @@ async def test_create_recipe(client):
 
 @pytest.mark.asyncio
 async def test_get_recipe_detail_increments_views(client):
-    resp_create = await client.post("/recipes", json={
-        "title": "Для просмотров", "cooking_time": 10,
-        "ingredients": "инг", "description": "опис"
-    })
+    resp_create = await client.post(
+        "/recipes",
+        json={
+            "title": "Для просмотров",
+            "cooking_time": 10,
+            "ingredients": "инг",
+            "description": "опис",
+        },
+    )
     recipe_id = resp_create.json()["id"]
     assert resp_create.json()["views"] == 0
 

@@ -1,9 +1,11 @@
 from typing import List
+
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import select
-from database import engine, async_session
+
 import models
 import schemas
+from database import async_session, engine
 
 app = FastAPI(title="Кулинарная книга API")
 
@@ -23,8 +25,7 @@ async def shutdown():
 async def list_recipes():
     async with async_session() as session:
         stmt = select(models.Recipe).order_by(
-            models.Recipe.views.desc(),
-            models.Recipe.cooking_time.asc()
+            models.Recipe.views.desc(), models.Recipe.cooking_time.asc()
         )
         result = await session.execute(stmt)
         recipes = result.scalars().all()
@@ -54,7 +55,7 @@ async def create_recipe(recipe_data: schemas.RecipeCreate):
             cooking_time=recipe_data.cooking_time,
             ingredients=recipe_data.ingredients,
             description=recipe_data.description,
-            views=0
+            views=0,
         )
         session.add(new_recipe)
         await session.commit()
