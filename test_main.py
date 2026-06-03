@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 from httpx import ASGITransport, AsyncClient
@@ -5,22 +6,35 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# Импортируем все модули в начале файла
+# Импорты для main и database
 import database
 from main import app
 import models
 
-# Используем временный файл для CI
+# Тестовая база данных
 TEST_DATABASE_URL = "sqlite+aiosqlite:///./test_cookbook.db"
 TEST_DB_FILE = "./test_cookbook.db"
 
-# Удаляем файл перед тестами
+# Удаляем старый файл если есть
 if os.path.exists(TEST_DB_FILE):
     os.remove(TEST_DB_FILE)
 
+# Создаем engine
 test_engine = create_async_engine(
     TEST_DATABASE_URL, connect_args={"check_same_thread": False}
 )
+
+
+# Функция для создания таблиц
+async def create_tables():
+    async with test_engine.begin() as conn:
+        await conn.run_sync(models.Recipe.metadata.create_all)
+
+
+# Запускаем создание таблиц синхронно
+asyncio.run(create_tables())
+
+# Создаем session
 TestingAsyncSession = async_sessionmaker(
     test_engine, class_=AsyncSession, expire_on_commit=False
 )
@@ -32,30 +46,16 @@ database.async_session = TestingAsyncSession
 
 @pytest.fixture(scope="session")
 def event_loop():
-    import asyncio
-
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
-
-
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def setup_database():
-    """Создаем таблицы один раз для всех тестов"""
-    async with test_engine.begin() as conn:
-        await conn.run_sync(models.Recipe.metadata.create_all)
-    yield
-    await test_engine.dispose()
-    # Удаляем файл после тестов
-    if os.path.exists(TEST_DB_FILE):
-        os.remove(TEST_DB_FILE)
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def clear_tables():
     """Очищаем таблицы перед каждым тестом"""
     async with test_engine.begin() as conn:
-        # Просто удаляем все данные
+        # Удаляем все данные
         await conn.execute(models.Recipe.__table__.delete())
     yield
 
@@ -124,3 +124,10 @@ async def test_create_recipe_missing_fields(client):
     incomplete_data = {"title": "Без времени"}
     response = await client.post("/recipes", json=incomplete_data)
     assert response.status_code == 422
+
+
+# Очистка после всех тестов
+def teardown_module():
+    """Удаляем тестовую базу данных после всех тестов"""
+    if os.path.exists(TEST_DB_FILE):
+        os.remove(TEST_DB_FILE)
